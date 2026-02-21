@@ -16,30 +16,51 @@ function broadcast(wss, payload) {
 
 export default function attachWebSocketServer(server) {
   const wss = new WebSocketServer({
-    server,
     path: "/ws",
     maxPayload: 1024 * 1024, // 1MB
+    noServer: true,
   });
-  wss.on("connection", async (socket, req) => {
-    if (wsArcjet) {
-      try {
+
+  // Handle WebSocket upgrade with Arcjet protection at pre-handshake stage
+  server.on("upgrade", async (req, socket, head) => {
+    try {
+      if (wsArcjet) {
         const decision = await wsArcjet.protect(req);
         if (decision.isDenied()) {
-          const code = decision.reason.isRateLimit() ? 1013 : 1008;
+          const statusCode = decision.reason.isRateLimit() ? 429 : 403;
           const reason = decision.reason.isRateLimit()
             ? "Rate Limit Exceeded"
-            : "Access isDenied";
+            : "Access Denied";
 
-          socket.close(code, reason);
-
+          // Write HTTP error response before WebSocket handshake
+          socket.write(
+            `HTTP/1.1 ${statusCode} ${reason}\r\n` +
+            "Connection: close\r\n" +
+            "Content-Length: 0\r\n" +
+            "\r\n"
+          );
+          socket.destroy();
           return;
         }
-      } catch (error) {
-        console.log("WS Error Connection");
-        socket.close(1011, "Server Security Error");
       }
-    }
 
+      // On success, complete the WebSocket handshake
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    } catch (error) {
+      console.error("WS Upgrade Error:", error);
+      socket.write(
+        "HTTP/1.1 500 Internal Server Error\r\n" +
+        "Connection: close\r\n" +
+        "Content-Length: 0\r\n" +
+        "\r\n"
+      );
+      socket.destroy();
+    }
+  });
+
+  wss.on("connection", (socket, req) => {
     socket.isAlive = true;
 
     socket.on("pong", () => {
