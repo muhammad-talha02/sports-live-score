@@ -78,7 +78,7 @@ commentaryRouter.post("/", async (req, res) => {
       return res.status(404).json({ error: "Match not found" });
     }
 
-    const [event] = await db
+    const [result] = await db
       .insert(commentary)
       .values({
         ...bodyParsed.data,
@@ -86,7 +86,11 @@ commentaryRouter.post("/", async (req, res) => {
       })
       .returning();
 
-    return res.status(201).json({ data: event });
+      if(res.app.locals.broadcastCommentry){
+        res.app.locals.broadcastCommentry(result.matchId, result)
+      }
+
+    return res.status(201).json({ data: result });
   } catch (error) {
     return res
       .status(500)
